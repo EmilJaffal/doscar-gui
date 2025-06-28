@@ -449,7 +449,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
             automargin=True  # Ensure proper spacing for the x-axis title
         ),
         yaxis=dict(
-            title='energy (eV)' if 'y_title' in show_titles else '',
+            title='Energy (eV)' if 'y_title' in show_titles else '',
             range=[ymin if ymin is not None else -8, ymax if ymax is not None else 2],
             showgrid=False,
             zeroline=False,
