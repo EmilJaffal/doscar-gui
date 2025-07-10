@@ -177,13 +177,12 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
         orbital_indices = {"s ↑": 1, "s ↓": 2, "p ↑": 3, "p ↓": 4, "d ↑": 5, "d ↓": 6}
     elif is_spin_polarized_and_im_resolved:
         orbital_labels = [
-            's ↑', 'py ↑', 'pz ↑', 'px ↑',
-            'dxy ↑', 'dyz ↑', 'dz² ↑', 'dxz ↑', 'dx²-y² ↑',
-            's ↓', 'py ↓', 'pz ↓', 'px ↓', 'dxy ↓', 'dyz ↓', 'dz² ↓', 'dxz ↓', 'dx²-y² ↓'
+            "s ↑", "s ↓", "py ↑", "py ↓", "pz ↑", "pz ↓", "px ↑", "px ↓",
+                "dxy ↑", "dxy ↓", "dyz ↑", "dyz ↓", "dz² ↑", "dz² ↓", "dxz ↑", "dxz ↓", "dx²-y² ↑", "dx²-y² ↓"
         ]
         orbital_indices = {
-            "s ↑": 1, "py ↑": 2, "pz ↑": 3, "px ↑": 4, "dxy ↑": 5, "dyz ↑": 6, "dz² ↑": 7, "dxz ↑": 8, "dx²-y² ↑": 9,
-            "s ↓": 10, "py ↓": 11, "pz ↓": 12, "px ↓": 13, "dxy ↓": 14, "dyz ↓": 15, "dz² ↓": 16, "dxz ↓": 17, "dx²-y² ↓": 18
+            "s ↑": 1, "s ↓": 2, "py ↑": 3, "py ↓": 4, "pz ↑": 5, "pz ↓": 6, "px ↑": 7, "px ↓": 8,
+            "dxy ↑": 9, "dxy ↓": 10, "dyz ↑": 11, "dyz ↓": 12, "dz² ↑": 13, "dz² ↓": 14, "dxz ↑": 15, "dxz ↓": 16, "dx²-y² ↑": 17, "dx²-y² ↓": 18
         }
     elif f_orbitals:
         orbital_labels = ["s", "p", "d", "f"]
