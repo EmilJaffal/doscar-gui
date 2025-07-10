@@ -471,9 +471,8 @@ def handle_atomic_contributions_and_debug(contents, atom_defaults, spin_polarize
             orbital_labels = ["s ↑", "s ↓", "p ↑", "p ↓", "d ↑", "d ↓"]
         elif num_columns == 19:
             orbital_labels = [
-                "s ↑", "py ↑", "pz ↑", "px ↑",
-                "dxy ↑", "dyz ↑", "dz² ↑", "dxz ↑", "dx²-y² ↑",
-                "s ↓", "py ↓", "pz ↓", "px ↓", "dxy ↓", "dyz ↓", "dz² ↓", "dxz ↓", "dx²-y² ↓"
+                "s ↑", "s ↓", "py ↑", "py ↓", "pz ↑", "pz ↓", "px ↑", "px ↓",
+                "dxy ↑", "dxy ↓", "dyz ↑", "dyz ↓", "dz² ↑", "dz² ↓", "dxz ↑", "dxz ↓", "dx²-y² ↑", "dx²-y² ↓"
             ]
         elif num_columns == 17:
             orbital_labels = [
