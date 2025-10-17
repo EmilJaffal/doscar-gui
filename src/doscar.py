@@ -43,7 +43,7 @@ def format_orbital_label(orbital):
     orbital_html = orbital_html.replace('(', '<sub>(</sub>').replace(')', '<sub>)</sub>')
     return f"<i>{orbital_html}</i>"
 
-def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None, ymin=None, ymax=None, legend_y=0.26, custom_colors=None, plot_type="total", spin_polarized=False, selected_atoms=None, toggled_atoms=None, show_idos=False, show_titles=None, show_axis_scale=None):
+def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None, ymin=None, ymax=None, legend_y=0.26, custom_colors=None, plot_type="total", spin_polarized=False, selected_atoms=None, toggled_atoms=None, show_idos=False, show_titles=None, show_axis_scale=None, legend_order=None):
 
     # Ensure custom_colors is initialized
     # custom_colors = {color_id['index']: color for color_id, color in zip(color_ids, selected_colors) if color is not None}
@@ -407,6 +407,88 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                         ))
 
             start_index = end_index
+
+    # --- Legend/traces ordering logic ---
+    # Build a list of all possible traces (Total, atom totals, atom orbitals)
+    trace_defs = []
+    if toggled_atoms is None or toggled_atoms.get('Total', True):
+        trace_defs.append({
+            'type': 'total',
+            'name': 'Total',
+            'color': custom_colors.get('Total', 'black'),
+            'x': total_dos,
+            'y': energy,
+            'width': 2.25
+        })
+    if selected_atoms or toggled_atoms:
+        atom_dos_blocks = []
+        current_line = 6 + num_points
+        for _ in range(num_atoms):
+            current_line += 1
+            block = np.array([
+                [float(values[0]) - fermi_energy] + [float(v) for v in values[1:]]
+                for values in (lines[current_line + i].split() for i in range(num_points))
+            ])
+            atom_dos_blocks.append(block)
+            current_line += num_points
+        start_index = 0
+        for atom_type, count in zip(atom_types, atom_counts):
+            end_index = start_index + count
+            # Atom total
+            if toggled_atoms and toggled_atoms.get(atom_type, False):
+                total_contribution = np.zeros(num_points)
+                for atom_index in range(start_index, end_index):
+                    total_contribution += np.sum(atom_dos_blocks[atom_index][:, 1:], axis=1)
+                trace_defs.append({
+                    'type': 'atom_total',
+                    'name': atom_type,
+                    'color': custom_colors.get(atom_type, 'gray'),
+                    'x': total_contribution,
+                    'y': atom_dos_blocks[start_index][:, 0],
+                    'width': 2.5
+                })
+            # Atom orbitals
+            if selected_atoms and atom_type in selected_atoms:
+                for orbital in selected_atoms[atom_type]:
+                    orbital_index = orbital_indices.get(orbital, None)
+                    if orbital_index is not None:
+                        summed_contribution = np.zeros(num_points)
+                        for atom_index in range(start_index, end_index):
+                            summed_contribution += atom_dos_blocks[atom_index][:, orbital_index]
+                        trace_defs.append({
+                            'type': 'atom_orbital',
+                            'name': f"{atom_type} ({format_orbital_label(orbital)})",
+                            'color': custom_colors.get(atom_type, 'gray'),
+                            'x': summed_contribution,
+                            'y': atom_dos_blocks[start_index][:, 0],
+                            'width': 1.5
+                        })
+            start_index = end_index
+
+    # --- Apply legend_order ---
+    if legend_order and isinstance(legend_order, list) and legend_order:
+        # legend_order contains names in desired order
+        ordered_traces = []
+        for name in legend_order:
+            for trace in trace_defs:
+                if trace['name'] == name:
+                    ordered_traces.append(trace)
+        # Add any traces not in legend_order at the end
+        for trace in trace_defs:
+            if trace['name'] not in legend_order:
+                ordered_traces.append(trace)
+    else:
+        ordered_traces = trace_defs
+
+    fig = go.Figure()
+    for trace in ordered_traces:
+        fig.add_trace(go.Scatter(
+            x=trace['x'],
+            y=trace['y'],
+            mode='lines',
+            name=trace['name'],
+            line=dict(color=trace['color'], width=trace['width'])
+        ))
 
     fig.add_shape(
         type="line",
