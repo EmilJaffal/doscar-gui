@@ -209,6 +209,7 @@ app.layout = html.Div([
     dcc.Store(id='atom-defaults'),
     dcc.Store(id='spin-polarization'),
     dcc.Store(id='action-message-store'),
+    dcc.Store(id='legend-order', data=[]),
     html.Div(id='debug-message', style={"display": "none"}),
     html.Div(id='folder-name', style={"display": "none"}),
     dcc.Download(id='download-plot'),
@@ -305,12 +306,13 @@ def store_uploaded_file(contents):
     Input('spin-polarization', 'data'),
     Input('show-titles', 'value'),
     Input('show-axis-scale', 'value'),
+    Input('legend-order', 'data'),
     State('dos-plot', 'figure')
 )
 def update_graph(
     contents, xmin, xmax, ymin, ymax, legend_y,
     selected_orbitals, atom_ids, selected_colors, color_ids,
-    toggled_totals, toggle_ids, spin_polarized, show_titles, show_axis_scale, current_figure
+    toggled_totals, toggle_ids, spin_polarized, show_titles, show_axis_scale, legend_order, current_figure
 ):
 
     if not contents or not isinstance(contents, dict) or 'POSCAR' not in contents or 'DOSCAR' not in contents:
@@ -369,7 +371,7 @@ def update_graph(
     # Update the plot based on selected atoms, orbitals, toggled totals
     fig = parse_doscar_and_plot(
         doscar_path, poscar_path, xmin, xmax_to_use, ymin, ymax, legend_y, custom_colors, plot_type="total",
-        spin_polarized=spin_polarized, selected_atoms=selected_atoms, toggled_atoms=toggled_atoms, show_titles=show_titles, show_axis_scale=show_axis_scale
+        spin_polarized=spin_polarized, selected_atoms=selected_atoms, toggled_atoms=toggled_atoms, show_titles=show_titles, show_axis_scale=show_axis_scale, legend_order=legend_order
     )
 
     # Return the updated plot and the calculated xmax only if it was used
@@ -419,6 +421,7 @@ def select_atom_totals_on_file_load(contents, atom_defaults):
 @app.callback(
     Output('atomic-contributions-container', 'children', allow_duplicate=True),
     Output('action-message-store', 'data', allow_duplicate=True),
+    Output('legend-order', 'data', allow_duplicate=True),
     Input('uploaded-contents', 'data'),
     State('atom-defaults', 'data'),
     State('spin-polarization', 'data'),
@@ -426,7 +429,7 @@ def select_atom_totals_on_file_load(contents, atom_defaults):
 )
 def handle_atomic_contributions_and_debug(contents, atom_defaults, spin_polarized):
     if not contents or not isinstance(contents, dict) or 'DOSCAR' not in contents:
-        return [], "Error: POSCAR or DOSCAR file not found."
+        return [], "Error: POSCAR or DOSCAR file not found.", []
 
     doscar_path = contents['DOSCAR']
 
@@ -532,7 +535,8 @@ def handle_atomic_contributions_and_debug(contents, atom_defaults, spin_polarize
             html.Th("Atom", style={"textAlign": "center", "padding": "10px", "fontWeight": "bold"}),
             html.Th("Orbitals", style={"textAlign": "center", "padding": "10px", "fontWeight": "bold"}),
             html.Th("Color", style={"textAlign": "center", "padding": "10px", "fontWeight": "bold"}),
-            html.Th("Toggle Total", style={"textAlign": "center", "padding": "10px", "fontWeight": "bold"})
+            html.Th("Toggle Total", style={"textAlign": "center", "padding": "10px", "fontWeight": "bold"}),
+            html.Th("Order", style={"textAlign": "center", "padding": "10px", "fontWeight": "bold"})
         ], style={"backgroundColor": "#f2f2f2"})
 
         table_rows = []
@@ -566,10 +570,17 @@ def handle_atomic_contributions_and_debug(contents, atom_defaults, spin_polarize
                     style={"fontFamily": "DejaVu Sans, Arial, sans-serif"}
                 ),
                 style={"textAlign": "center", "padding": "10px"}
+            ),
+            html.Td(
+                html.Div([
+                    html.Button("↑", id={'type': 'order-up', 'index': 'Total'}, n_clicks=0, style={"marginRight": "5px"}),
+                    html.Button("↓", id={'type': 'order-down', 'index': 'Total'}, n_clicks=0)
+                ], style={"display": "flex", "justifyContent": "center"})
             )
         ], style={"borderBottom": "1px solid #ddd"}))
 
         atom_types = list(atom_defaults.keys())
+        legend_order = ['Total'] + atom_types
         for atom in atom_types:
             table_rows.append(html.Tr([
                 html.Td(atom, style={"textAlign": "center", "padding": "10px", "fontFamily": "DejaVu Sans, Arial, sans-serif"}),
@@ -609,6 +620,12 @@ def handle_atomic_contributions_and_debug(contents, atom_defaults, spin_polarize
                         style={"fontFamily": "DejaVu Sans, Arial, sans-serif"}
                     ),
                     style={"textAlign": "center", "padding": "10px"}
+                ),
+                html.Td(
+                    html.Div([
+                        html.Button("↑", id={'type': 'order-up', 'index': atom}, n_clicks=0, style={"marginRight": "5px"}),
+                        html.Button("↓", id={'type': 'order-down', 'index': atom}, n_clicks=0)
+                    ], style={"display": "flex", "justifyContent": "center"})
                 )
             ], style={"borderBottom": "1px solid #ddd"}))
 
@@ -622,9 +639,9 @@ def handle_atomic_contributions_and_debug(contents, atom_defaults, spin_polarize
             }
         )
 
-        return table, debug_message
+        return table, debug_message, legend_order
     except Exception as e:
-        return [], f"Error processing DOSCAR file: {str(e)}"
+        return [], f"Error processing DOSCAR file: {str(e)}", []
 
 @app.callback(
     Output('debug-message', 'children'),
@@ -775,6 +792,34 @@ def load_demo_file(n_clicks):
         contents = f"data:{mime_type};base64,{encoded}"
         return contents
     return dash.no_update
+
+@app.callback(
+    Output('legend-order', 'data', allow_duplicate=True),
+    [Input({'type': 'order-up', 'index': ALL}, 'n_clicks'),
+     Input({'type': 'order-down', 'index': ALL}, 'n_clicks')],
+    [State('legend-order', 'data'),
+     State('atomic-contributions-container', 'children')],
+    prevent_initial_call=True
+)
+def update_legend_order(up_clicks, down_clicks, legend_order, table_children):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+    trigger = ctx.triggered[0]['prop_id']
+    # Extract the atom name or 'Total' from the trigger string
+    import re
+    match = re.search(r'index":\s*"([^"]+)"', trigger)
+    if not match:
+        return legend_order
+    name = match.group(1)
+    if name not in legend_order:
+        return legend_order
+    idx = legend_order.index(name)
+    if 'order-up' in trigger and idx > 0:
+        legend_order[idx-1], legend_order[idx] = legend_order[idx], legend_order[idx-1]
+    elif 'order-down' in trigger and idx < len(legend_order)-1:
+        legend_order[idx+1], legend_order[idx] = legend_order[idx], legend_order[idx+1]
+    return legend_order
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8050))  # Use the PORT environment variable set by Heroku
