@@ -2,9 +2,8 @@ import os
 import re
 import numpy as np
 import plotly.graph_objs as go
-from dash import dcc
-import csv  # Add this import for CSV writing
-import dash_html_components as html
+from dash import dcc, html
+import csv  
 
 # Define Mendeleev numbers
 mendeleev_numbers = {
@@ -43,7 +42,7 @@ def format_orbital_label(orbital):
     orbital_html = orbital_html.replace('(', '<sub>(</sub>').replace(')', '<sub>)</sub>')
     return f"<i>{orbital_html}</i>"
 
-def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None, ymin=None, ymax=None, legend_y=0.26, custom_colors=None, plot_type="total", spin_polarized=False, selected_atoms=None, toggled_atoms=None, show_idos=False, show_titles=None, show_axis_scale=None, legend_order=None):
+def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None, ymin=None, ymax=None, legend_y=0.26, custom_colors=None, plot_type="total", spin_polarized=False, selected_atoms=None, toggled_atoms=None, show_idos=False, show_titles=None, show_axis_scale=None, display_spins=None, legend_order=None):
 
     # Ensure custom_colors is initialized
     # custom_colors = {color_id['index']: color for color_id, color in zip(color_ids, selected_colors) if color is not None}
@@ -68,6 +67,10 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
     # Calculate energy and total DOS
     energy = first_block[:, 0] - fermi_energy  # Subtract Fermi energy from column 1
 
+    # Check if the first block indicates spin polarization (must be done early)
+    num_columns_first_block = len(lines[6].split())
+    has_spin_data = num_columns_first_block == 5  # Energy, DOS_up, DOS_down, integrated_DOS_up, integrated_DOS_down
+
     # Read atom contributions from atom blocks
     atom_dos_blocks = []
     current_line = 6 + num_points
@@ -85,45 +88,26 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
     for block in atom_dos_blocks:
         total_dos += np.sum(block[:, 1:], axis=1)  # Sum all orbitals for each atom
 
-    fig = go.Figure()
-
     # Dynamically calculate xmax based on the maximum DOS value within the energy range
     if xmax is None:
-        dos_in_range = total_dos[(energy >= (ymin if ymin is not None else -np.inf)) & (energy <= (ymax if ymax is not None else np.inf))]
-        xmax = 1.1 * np.max(dos_in_range) if len(dos_in_range) > 0 else 28  # Default to 28 if no values are found
+        if display_spins and 'display_spins' in display_spins and has_spin_data:
+            # For spin display, calculate based on individual spin components
+            dos_up_in_range = first_block[:, 1][(energy >= (ymin if ymin is not None else -np.inf)) & (energy <= (ymax if ymax is not None else np.inf))]
+            dos_down_in_range = first_block[:, 2][(energy >= (ymin if ymin is not None else -np.inf)) & (energy <= (ymax if ymax is not None else np.inf))]
+            max_dos = max(np.max(dos_up_in_range) if len(dos_up_in_range) > 0 else 0,
+                         np.max(dos_down_in_range) if len(dos_down_in_range) > 0 else 0)
+            base_xmax = 1.1 * max_dos if max_dos > 0 else 28
+            xmax = base_xmax
+            xmin = -base_xmax if xmin is None else xmin
+        else:
+            # Regular calculation for non-spin display
+            dos_in_range = total_dos[(energy >= (ymin if ymin is not None else -np.inf)) & (energy <= (ymax if ymax is not None else np.inf))]
+            xmax = 1.1 * np.max(dos_in_range) if len(dos_in_range) > 0 else 28  # Default to 28 if no values are found
 
-    # Plot the total DOS
-    # fig.add_trace(go.Scatter(x=total_dos, y=energy, mode='lines', name='Total DOS', line=dict(color='black', width=2.25)))
+    # Check if we should display spins separately
+    display_spin_separated = display_spins and 'display_spins' in display_spins and has_spin_data
 
-    if spin_polarized:  # ISPIN=2
-        # Use the atom-summed total DOS for plotting
-        dos_up = first_block[:, 1]  # DOS (↑)
-        dos_down = first_block[:, 2]  # DOS (↓)
-
-        # Calculate total DOS as the sum of atomic contributions
-        total_dos = np.zeros(num_points)
-        for block in atom_dos_blocks:
-            total_dos += np.sum(block[:, 1:], axis=1)  # Sum all orbitals for each atom
-
-    else:  # ISPIN=1
-        # Use the atom-summed total DOS for plotting
-        pass
-
-    fig = go.Figure()
-
-    # Dynamically calculate xmax based on the maximum DOS value within the energy range
-    if xmax is None:
-        dos_in_range = total_dos[(energy >= (ymin if ymin is not None else -np.inf)) & (energy <= (ymax if ymax is not None else np.inf))]
-        xmax = 1.1 * np.max(dos_in_range) if len(dos_in_range) > 0 else 28  # Default to 28 if no values are found
-
-    # Plot the total DOS
-    # fig.add_trace(go.Scatter(x=total_dos, y=energy, mode='lines', name='Total DOS', line=dict(color='black', width=2.25)))
-
-    # Add DOS (↑) and DOS (↓) as separate traces if spin-polarized
-    if spin_polarized:
-        fig.add_trace(go.Scatter(x=dos_up, y=energy, mode='lines', name='DOS (↑)', line=dict(color='blue', width=2.25)))
-        fig.add_trace(go.Scatter(x=dos_down, y=energy, mode='lines', name='DOS (↓)', line=dict(color='red', width=2.25)))
-
+    # Get POSCAR data
     with open(poscar_filename, 'r') as f:
         poscar_lines = f.readlines()
     atom_types = poscar_lines[5].split()
@@ -136,21 +120,11 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
     default_colors = ['blue', 'red', 'green']
     color_map = {atom: default_colors[i % len(default_colors)] for i, atom in enumerate(atom_types_sorted)}
 
-    atom_dos_blocks = []
-    current_line = 6 + num_points
-    for _ in range(num_atoms):  # Use the extracted num_atoms
-        current_line += 1
-        block = np.array([
-            [float(values[0]) - fermi_energy] + [float(v) for v in values[1:]]
-            for values in (lines[current_line + i].split() for i in range(num_points))
-        ])
-        atom_dos_blocks.append(block)
-        current_line += num_points
-
+    # Define f-elements
     f_elements = [
-    "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu",
-    "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr"
-]
+        "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu",
+        "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr"
+    ]
 
     # Dynamically determine the number of columns in the atom blocks
     num_columns = atom_dos_blocks[0].shape[1]
@@ -276,62 +250,10 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
         orbital_labels = ['s', 'p', 'd']
         orbital_indices = {"s": 1, "p": 2, "d": 3}
 
-    grouped_dos = {}
-    start_index = 0
-    for atom_type, count in zip(atom_types_sorted, atom_counts):
-        end_index = start_index + count
+    # Build traces for the final figure
+    traces = []
 
-        # Dynamically initialize aggregated_dos with the correct number of columns
-        aggregated_dos = np.zeros((num_points, num_columns))
-        aggregated_dos[:, 0] = atom_dos_blocks[start_index][:, 0]  # Energy remains the same
-
-        for block in atom_dos_blocks[start_index:end_index]:
-            # Ensure the shapes match before adding
-            if block[:, 1:].shape == aggregated_dos[:, 1:].shape:
-                aggregated_dos[:, 1:] += block[:, 1:]
-            else:
-                raise ValueError(f"Shape mismatch: aggregated_dos {aggregated_dos[:, 1:].shape}, block {block[:, 1:].shape}")
-
-        grouped_dos[atom_type] = aggregated_dos
-        start_index = end_index
-
-    fig = go.Figure()
-
-    # Plot atomic contributions first
-    for atom_type, dos_data in grouped_dos.items():
-        # Use custom color if provided, otherwise fallback to default colors
-        color = custom_colors.get(atom_type, color_map.get(atom_type, 'blue'))
-
-        # Add the atom trace
-        fig.add_trace(go.Scatter(
-            x=np.sum(dos_data[:, 1:], axis=1),  # Sum all orbital contributions for total DOS
-            y=dos_data[:, 0],  # Energy
-            mode='lines',
-            name=f"{atom_type} (Total)",
-            line=dict(color=color, width=2.5),
-        ))
-
-        if is_im_resolved or is_spin_polarized or is_spin_polarized_and_im_resolved:
-            # Add individual orbital contributions for IM-Resolved, ISPIN=2, or Spin-Polarized and IM-Resolved
-            for i, orbital in enumerate(orbital_labels, start=1):
-                fig.add_trace(go.Scatter(
-                    x=dos_data[:, i],  # Individual orbital contribution
-                    y=dos_data[:, 0],  # Energy
-                    mode='lines',
-                    name=f"{atom_type} ({format_orbital_label(orbital)})",
-                    line=dict(dash='dash', width=1.5),
-                ))
-
-    # Add the total DOS trace last to ensure it appears on top
-    #if toggled_atoms is None or toggled_atoms.get('Total', True):
-    #    fig.add_trace(go.Scatter(
-    #        x=total_dos,  # Use the atom-summed total DOS
-    #        y=energy,  # Use the energy values
-    #        mode='lines',
-    #        name='Total',
-    #        line=dict(color='black', width=2.25),
-    #    ))
-
+    # Get folder name for display
     folder_path = os.path.dirname(os.path.abspath(doscar_filename))
     folder_name = os.path.basename(folder_path)
 
@@ -341,25 +263,41 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
 
     folder_name_unicode = subscript_numbers(folder_name)
 
-    # Extract the total DOS data from the first block
-    total_dos_data = np.array([
-        [float(line.split()[0]) - fermi_energy, float(line.split()[1])]
-        for line in lines[6:6 + num_points]
-    ])
-
-    fig = go.Figure()
-
-    # Plot the total DOS using atom-summed total_dos
+    # Plot the total DOS
     if toggled_atoms is None or toggled_atoms.get('Total', True):
-        fig.add_trace(go.Scatter(
-            x=total_dos,  # Use the atom-summed total DOS
-            y=energy,  # Use the energy values
-            mode='lines',
-            name='Total',
-            line=dict(color=custom_colors.get('Total', 'black'), width=2.25),  # <-- FIXED LINE
-    ))
+        if display_spin_separated and has_spin_data:
+            # For spin-polarized display, use the first block data
+            dos_up = first_block[:, 1]  # DOS (↑)
+            dos_down = first_block[:, 2]  # DOS (↓)
+            
+            # Plot spin up (positive side)
+            traces.append(go.Scatter(
+                x=dos_up,
+                y=energy,
+                mode='lines',
+                name='Total (↑)',
+                line=dict(color=custom_colors.get('Total', 'blue'), width=2.25),
+            ))
+            
+            # Plot spin down (negative side)
+            traces.append(go.Scatter(
+                x=-dos_down,  # Negative for left side
+                y=energy,
+                mode='lines',
+                name='Total (↓)',
+                line=dict(color=custom_colors.get('Total', 'red'), width=2.25, dash='dash'),
+            ))
+        else:
+            # Regular total DOS plot
+            traces.append(go.Scatter(
+                x=total_dos,  # Use the atom-summed total DOS
+                y=energy,  # Use the energy values
+                mode='lines',
+                name='Total',
+                line=dict(color=custom_colors.get('Total', 'black'), width=2.25),
+            ))
 
-    # Handle atomic contributions if selected_atoms is provided
+    # Handle atomic contributions if selected_atoms or toggled_atoms is provided
     if selected_atoms or toggled_atoms:
         atom_dos_blocks = []
         current_line = 6 + num_points
@@ -382,13 +320,54 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                 total_contribution = np.zeros(num_points)
                 for atom_index in range(start_index, end_index):
                     total_contribution += np.sum(atom_dos_blocks[atom_index][:, 1:], axis=1)  # Sum all columns except energy
-                fig.add_trace(go.Scatter(
-                    x=total_contribution,
-                    y=atom_dos_blocks[start_index][:, 0],  # Energy remains the same
-                    mode='lines',
-                    name=f"{atom_type}",
-                    line=dict(color=custom_colors.get(atom_type, 'gray'), width=2.5)
-                ))
+                
+                if display_spin_separated and has_spin_data and (is_spin_polarized or is_spin_polarized_and_im_resolved or f_orbitals_spin or f_orbitals_im_resolved_spin):
+                    # For spin-polarized atomic contributions, split into up and down
+                    total_contribution_up = np.zeros(num_points)
+                    total_contribution_down = np.zeros(num_points)
+                    
+                    for atom_index in range(start_index, end_index):
+                        if is_spin_polarized:  # s↑, s↓, p↑, p↓, d↑, d↓
+                            total_contribution_up += atom_dos_blocks[atom_index][:, 1] + atom_dos_blocks[atom_index][:, 3] + atom_dos_blocks[atom_index][:, 5]  # s↑ + p↑ + d↑
+                            total_contribution_down += atom_dos_blocks[atom_index][:, 2] + atom_dos_blocks[atom_index][:, 4] + atom_dos_blocks[atom_index][:, 6]  # s↓ + p↓ + d↓
+                        elif is_spin_polarized_and_im_resolved:  # Individual orbitals with spin
+                            # Sum all up spins (odd indices: 1, 3, 5, 7, 9, 11, 13, 15, 17)
+                            total_contribution_up += np.sum(atom_dos_blocks[atom_index][:, 1::2], axis=1)
+                            # Sum all down spins (even indices: 2, 4, 6, 8, 10, 12, 14, 16, 18)
+                            total_contribution_down += np.sum(atom_dos_blocks[atom_index][:, 2::2], axis=1)
+                        elif f_orbitals_spin:  # s↑, s↓, p↑, p↓, d↑, d↓, f↑, f↓
+                            total_contribution_up += atom_dos_blocks[atom_index][:, 1] + atom_dos_blocks[atom_index][:, 3] + atom_dos_blocks[atom_index][:, 5] + atom_dos_blocks[atom_index][:, 7]
+                            total_contribution_down += atom_dos_blocks[atom_index][:, 2] + atom_dos_blocks[atom_index][:, 4] + atom_dos_blocks[atom_index][:, 6] + atom_dos_blocks[atom_index][:, 8]
+                        elif f_orbitals_im_resolved_spin:  # Individual f orbitals with spin
+                            total_contribution_up += np.sum(atom_dos_blocks[atom_index][:, 1::2], axis=1)
+                            total_contribution_down += np.sum(atom_dos_blocks[atom_index][:, 2::2], axis=1)
+                    
+                    # Plot spin up
+                    traces.append(go.Scatter(
+                        x=total_contribution_up,
+                        y=atom_dos_blocks[start_index][:, 0],
+                        mode='lines',
+                        name=f"{atom_type} (↑)",
+                        line=dict(color=custom_colors.get(atom_type, 'gray'), width=2.5)
+                    ))
+                    
+                    # Plot spin down (negative)
+                    traces.append(go.Scatter(
+                        x=-total_contribution_down,
+                        y=atom_dos_blocks[start_index][:, 0],
+                        mode='lines',
+                        name=f"{atom_type} (↓)",
+                        line=dict(color=custom_colors.get(atom_type, 'gray'), width=2.5, dash='dash')
+                    ))
+                else:
+                    # Regular atomic total plot
+                    traces.append(go.Scatter(
+                        x=total_contribution,
+                        y=atom_dos_blocks[start_index][:, 0],  # Energy remains the same
+                        mode='lines',
+                        name=f"{atom_type}",
+                        line=dict(color=custom_colors.get(atom_type, 'gray'), width=2.5)
+                    ))
 
             # Plot selected orbital contributions
             if selected_atoms and atom_type in selected_atoms:
@@ -398,7 +377,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                         summed_contribution = np.zeros(num_points)
                         for atom_index in range(start_index, end_index):
                             summed_contribution += atom_dos_blocks[atom_index][:, orbital_index]
-                        fig.add_trace(go.Scatter(
+                        traces.append(go.Scatter(
                             x=summed_contribution,
                             y=atom_dos_blocks[start_index][:, 0],  # Energy remains the same
                             mode='lines',
@@ -408,87 +387,10 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
 
             start_index = end_index
 
-    # --- Legend/traces ordering logic ---
-    # Build a list of all possible traces (Total, atom totals, atom orbitals)
-    trace_defs = []
-    if toggled_atoms is None or toggled_atoms.get('Total', True):
-        trace_defs.append({
-            'type': 'total',
-            'name': 'Total',
-            'color': custom_colors.get('Total', 'black'),
-            'x': total_dos,
-            'y': energy,
-            'width': 2.25
-        })
-    if selected_atoms or toggled_atoms:
-        atom_dos_blocks = []
-        current_line = 6 + num_points
-        for _ in range(num_atoms):
-            current_line += 1
-            block = np.array([
-                [float(values[0]) - fermi_energy] + [float(v) for v in values[1:]]
-                for values in (lines[current_line + i].split() for i in range(num_points))
-            ])
-            atom_dos_blocks.append(block)
-            current_line += num_points
-        start_index = 0
-        for atom_type, count in zip(atom_types, atom_counts):
-            end_index = start_index + count
-            # Atom total
-            if toggled_atoms and toggled_atoms.get(atom_type, False):
-                total_contribution = np.zeros(num_points)
-                for atom_index in range(start_index, end_index):
-                    total_contribution += np.sum(atom_dos_blocks[atom_index][:, 1:], axis=1)
-                trace_defs.append({
-                    'type': 'atom_total',
-                    'name': atom_type,
-                    'color': custom_colors.get(atom_type, 'gray'),
-                    'x': total_contribution,
-                    'y': atom_dos_blocks[start_index][:, 0],
-                    'width': 2.5
-                })
-            # Atom orbitals
-            if selected_atoms and atom_type in selected_atoms:
-                for orbital in selected_atoms[atom_type]:
-                    orbital_index = orbital_indices.get(orbital, None)
-                    if orbital_index is not None:
-                        summed_contribution = np.zeros(num_points)
-                        for atom_index in range(start_index, end_index):
-                            summed_contribution += atom_dos_blocks[atom_index][:, orbital_index]
-                        trace_defs.append({
-                            'type': 'atom_orbital',
-                            'name': f"{atom_type} ({format_orbital_label(orbital)})",
-                            'color': custom_colors.get(atom_type, 'gray'),
-                            'x': summed_contribution,
-                            'y': atom_dos_blocks[start_index][:, 0],
-                            'width': 1.5
-                        })
-            start_index = end_index
-
-    # --- Apply legend_order ---
-    if legend_order and isinstance(legend_order, list) and legend_order:
-        # legend_order contains names in desired order
-        ordered_traces = []
-        for name in legend_order:
-            for trace in trace_defs:
-                if trace['name'] == name:
-                    ordered_traces.append(trace)
-        # Add any traces not in legend_order at the end
-        for trace in trace_defs:
-            if trace['name'] not in legend_order:
-                ordered_traces.append(trace)
-    else:
-        ordered_traces = trace_defs
-
+    # Create the figure from traces
     fig = go.Figure()
-    for trace in ordered_traces:
-        fig.add_trace(go.Scatter(
-            x=trace['x'],
-            y=trace['y'],
-            mode='lines',
-            name=trace['name'],
-            line=dict(color=trace['color'], width=trace['width'])
-        ))
+    for trace in traces:
+        fig.add_trace(trace)
 
     fig.add_shape(
         type="line",
@@ -503,6 +405,12 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
         ),
     )
 
+    # Adjust legend position for spin display
+    if display_spin_separated and has_spin_data:
+        legend_y_adjusted = 0.4
+    else:
+        legend_y_adjusted = legend_y
+
     fig.update_layout(
         font=dict(family="DejaVu Sans, Arial, sans-serif", size=18, color='black'),
         title=dict(
@@ -516,7 +424,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                 text='DOS' if 'x_title' in show_titles else '',
                 font=dict(size=20, family="DejaVu Sans, Arial, sans-serif"),
             ),
-            range=[xmin if xmin is not None else 0, xmax],  # Use the dynamically calculated xmax
+            range=[xmin if xmin is not None else (0 if not (display_spins and 'display_spins' in display_spins and has_spin_data) else -xmax), xmax],  # Use symmetric range for spin display
             showgrid=False,
             zeroline=True,
             zerolinewidth=3,
@@ -543,7 +451,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
         ),
         legend=dict(
             x=0.95,
-            y=legend_y,
+            y=legend_y_adjusted,
             xanchor='right',
             yanchor='top'
         ),
