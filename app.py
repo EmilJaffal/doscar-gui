@@ -3,6 +3,7 @@ import os
 import zipfile
 from dash import Dash, dcc, html, Input, Output, State
 from dash.dependencies import ALL
+from dash.exceptions import PreventUpdate
 from src.doscar import parse_doscar_and_plot
 import plotly.io as pio
 from io import BytesIO
@@ -12,6 +13,7 @@ import math
 import plotly.graph_objects as go
 import shutil
 import mimetypes
+import re
 
 pio.kaleido.scope.default_format = "png"
 pio.kaleido.scope.default_width = 1200
@@ -143,6 +145,18 @@ app.layout = html.Div([
                     {'label': 'Show Y axis scale', 'value': 'y_scale'},
                 ],
                 value=['x_scale', 'y_scale'],  # Both shown by default
+                inline=True,
+                style={"fontFamily": "DejaVu Sans, Arial, sans-serif", "marginLeft": "10px"}
+            ),
+        ], style={"marginBottom": "15px", "marginLeft": "auto"}),
+
+        html.Div([
+            dcc.Checklist(
+                id='display-spins',
+                options=[
+                    {'label': 'Display Spins (spin up: right, spin down: left)', 'value': 'display_spins'},
+                ],
+                value=[],  # Not shown by default
                 inline=True,
                 style={"fontFamily": "DejaVu Sans, Arial, sans-serif", "marginLeft": "10px"}
             ),
@@ -290,6 +304,7 @@ def store_uploaded_file(contents):
 @app.callback(
     Output('dos-plot', 'figure'),
     Output('xmax', 'value'),
+    Output('xmin', 'value'),
     Output('action-message-store', 'data'),
     Input('uploaded-contents', 'data'),
     Input('xmin', 'value'),
@@ -306,17 +321,18 @@ def store_uploaded_file(contents):
     Input('spin-polarization', 'data'),
     Input('show-titles', 'value'),
     Input('show-axis-scale', 'value'),
+    Input('display-spins', 'value'),
     Input('legend-order', 'data'),
     State('dos-plot', 'figure')
 )
 def update_graph(
     contents, xmin, xmax, ymin, ymax, legend_y,
     selected_orbitals, atom_ids, selected_colors, color_ids,
-    toggled_totals, toggle_ids, spin_polarized, show_titles, show_axis_scale, legend_order, current_figure
+    toggled_totals, toggle_ids, spin_polarized, show_titles, show_axis_scale, display_spins, legend_order, current_figure
 ):
 
     if not contents or not isinstance(contents, dict) or 'POSCAR' not in contents or 'DOSCAR' not in contents:
-        return {}, None, "Error: POSCAR or DOSCAR file not found."
+        return {}, None, None, "Error: POSCAR or DOSCAR file not found."
 
     poscar_path = contents['POSCAR']
     doscar_path = contents['DOSCAR']
@@ -350,10 +366,53 @@ def update_graph(
     # Adjust the range calculation using the new atom-summed total DOS
     energy_range_mask = (energy >= (ymin if ymin is not None else -8)) & (energy <= (ymax if ymax is not None else 2))
     dos_in_range = total_dos[energy_range_mask]
-    calculated_xmax = math.ceil(1.1 * np.max(dos_in_range)) if len(dos_in_range) > 0 else DEFAULTS["xmax"]
+    
+    # Check if we're in spin display mode to calculate the appropriate xmax and xmin
+    is_spin_display = display_spins and 'display_spins' in display_spins
+    calculated_xmin = xmin  # Default to current xmin
+    
+    if is_spin_display:
+        # For spin display, we need to check spin data and calculate based on individual components
+        first_block = np.array([
+            [float(value) for value in line.split()]
+            for line in lines[6:6 + num_points]
+        ])
+        num_columns_first_block = len(lines[6].split())
+        has_spin_data = num_columns_first_block == 5
+        
+        if has_spin_data:
+            dos_up_in_range = first_block[:, 1][energy_range_mask]
+            dos_down_in_range = first_block[:, 2][energy_range_mask]
+            max_dos = max(np.max(dos_up_in_range) if len(dos_up_in_range) > 0 else 0,
+                         np.max(dos_down_in_range) if len(dos_down_in_range) > 0 else 0)
+            calculated_xmax = math.ceil(1.1 * max_dos) if max_dos > 0 else DEFAULTS["xmax"]
+            calculated_xmin = -calculated_xmax  # Make symmetric for spin display
+        else:
+            calculated_xmax = math.ceil(1.1 * np.max(dos_in_range)) if len(dos_in_range) > 0 else DEFAULTS["xmax"]
+    else:
+        calculated_xmax = math.ceil(1.1 * np.max(dos_in_range)) if len(dos_in_range) > 0 else DEFAULTS["xmax"]
 
-    # Use the calculated xmax if xmax is None (e.g., on app start or file upload), otherwise respect the user's input
-    xmax_to_use = calculated_xmax if xmax is None else xmax
+    # Use auto-calculated values when spin display toggles or first load
+    ctx = dash.callback_context
+    spin_display_changed = ctx.triggered and any('display-spins' in trigger['prop_id'] for trigger in ctx.triggered)
+    
+    # Force auto-adjustment when spin display is toggled or on initial load
+    if spin_display_changed or xmax is None:
+        xmax_to_use = calculated_xmax
+        # Check if we have spin data for setting xmin
+        if is_spin_display:
+            first_block = np.array([
+                [float(value) for value in line.split()]
+                for line in lines[6:6 + num_points]
+            ])
+            num_columns_first_block = len(lines[6].split())
+            has_spin_data_check = num_columns_first_block == 5
+            xmin_to_use = calculated_xmin if has_spin_data_check else DEFAULTS["xmin"]
+        else:
+            xmin_to_use = DEFAULTS["xmin"]
+    else:
+        xmax_to_use = xmax
+        xmin_to_use = xmin if xmin is not None else DEFAULTS["xmin"]
 
     # Ensure custom_colors is initialized
     custom_colors = {color_id['index']: color for color_id, color in zip(color_ids, selected_colors)} if selected_colors else {}
@@ -370,12 +429,12 @@ def update_graph(
 
     # Update the plot based on selected atoms, orbitals, toggled totals
     fig = parse_doscar_and_plot(
-        doscar_path, poscar_path, xmin, xmax_to_use, ymin, ymax, legend_y, custom_colors, plot_type="total",
-        spin_polarized=spin_polarized, selected_atoms=selected_atoms, toggled_atoms=toggled_atoms, show_titles=show_titles, show_axis_scale=show_axis_scale, legend_order=legend_order
+        doscar_path, poscar_path, xmin_to_use, xmax_to_use, ymin, ymax, legend_y, custom_colors, plot_type="total",
+        spin_polarized=spin_polarized, selected_atoms=selected_atoms, toggled_atoms=toggled_atoms, show_titles=show_titles, show_axis_scale=show_axis_scale, display_spins=display_spins, legend_order=legend_order
     )
 
-    # Return the updated plot and the calculated xmax only if it was used
-    return fig, calculated_xmax if xmax is None else xmax, ""
+    # Return the updated plot and the calculated values
+    return fig, xmax_to_use, xmin_to_use, ""
 
 @app.callback(
     Output('download-plot', 'data'),
@@ -398,8 +457,6 @@ def save_plot(n_clicks, figure, folder_name):
             style={"fontWeight": "bold", "fontSize": "18px"}
         )
     return dash.no_update, ""
-
-from dash.exceptions import PreventUpdate
 
 @app.callback(
     Output({'type': 'atom-checkbox', 'index': ALL}, 'value', allow_duplicate=True),
