@@ -252,6 +252,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
 
     # Build traces for the final figure
     traces = []
+    total_traces = []  # Separate storage for total traces
 
     # Get folder name for display
     folder_path = os.path.dirname(os.path.abspath(doscar_filename))
@@ -263,7 +264,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
 
     folder_name_unicode = subscript_numbers(folder_name)
 
-    # Plot the total DOS
+    # Prepare total DOS traces (but don't add to main traces yet)
     if toggled_atoms is None or toggled_atoms.get('Total', True):
         if display_spin_separated and has_spin_data:
             # For spin-polarized display, use the first block data
@@ -271,7 +272,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
             dos_down = first_block[:, 2]  # DOS (↓)
             
             # Plot spin up (positive side)
-            traces.append(go.Scatter(
+            total_traces.append(go.Scatter(
                 x=dos_up,
                 y=energy,
                 mode='lines',
@@ -280,7 +281,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
             ))
             
             # Plot spin down (negative side)
-            traces.append(go.Scatter(
+            total_traces.append(go.Scatter(
                 x=-dos_down,  # Negative for left side
                 y=energy,
                 mode='lines',
@@ -289,7 +290,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
             ))
         else:
             # Regular total DOS plot
-            traces.append(go.Scatter(
+            total_traces.append(go.Scatter(
                 x=total_dos,  # Use the atom-summed total DOS
                 y=energy,  # Use the energy values
                 mode='lines',
@@ -310,9 +311,31 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
             atom_dos_blocks.append(block)
             current_line += num_points
 
+        # Create a mapping of atom type to its starting indices and counts
+        atom_type_ranges = {}
         start_index = 0
         for atom_type, count in zip(atom_types, atom_counts):
             end_index = start_index + count
+            atom_type_ranges[atom_type] = (start_index, end_index)
+            start_index = end_index
+
+        # Determine plotting order - use legend_order if provided, otherwise Mendeleev order
+        if legend_order and len(legend_order) > 1:
+            # Use custom legend order, but only include atom types that exist in the system
+            atom_order = [atom for atom in legend_order if atom in atom_type_ranges]
+            # Add any missing atom types at the end
+            for atom_type in atom_types_sorted:
+                if atom_type not in atom_order:
+                    atom_order.append(atom_type)
+        else:
+            # Use default Mendeleev order
+            atom_order = atom_types_sorted
+        
+        # Plot in the determined order
+        for atom_type in atom_order:
+            if atom_type not in atom_type_ranges:
+                continue
+            start_index, end_index = atom_type_ranges[atom_type]
 
     
             # Plot total contributions if toggled
@@ -385,11 +408,53 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                             line=dict(color=custom_colors.get(atom_type, 'gray'), width=1.5)
                         ))
 
-            start_index = end_index
-
-    # Create the figure from traces
-    fig = go.Figure()
+    # Organize traces according to legend order
+    ordered_traces = []
+    trace_dict = {}
+    
+    # Create a dictionary to store traces by their primary identifier
+    for trace in total_traces:
+        if 'Total' not in trace_dict:
+            trace_dict['Total'] = []
+        trace_dict['Total'].append(trace)
+    
     for trace in traces:
+        # Extract atom type from trace name (handle both "Atom" and "Atom (orbital)" formats)
+        trace_name = trace.name
+        if '(' in trace_name and ')' in trace_name:
+            if trace_name.endswith('(↑)') or trace_name.endswith('(↓)'):
+                # Handle spin cases like "Fe (↑)" or "Fe (↓)"
+                atom_type = trace_name.split(' (')[0]
+            else:
+                # Handle orbital cases like "Fe (dxy)"
+                atom_type = trace_name.split(' (')[0]
+        else:
+            atom_type = trace_name
+        
+        if atom_type not in trace_dict:
+            trace_dict[atom_type] = []
+        trace_dict[atom_type].append(trace)
+    
+    # Add traces in the order specified by legend_order
+    if legend_order and len(legend_order) > 1:
+        for item in legend_order:
+            if item in trace_dict:
+                ordered_traces.extend(trace_dict[item])
+        # Add any remaining traces not in legend_order
+        for key, trace_list in trace_dict.items():
+            if key not in legend_order:
+                ordered_traces.extend(trace_list)
+    else:
+        # If no legend order specified, add Total first, then others
+        if 'Total' in trace_dict:
+            ordered_traces.extend(trace_dict['Total'])
+        for key, trace_list in trace_dict.items():
+            if key != 'Total':
+                ordered_traces.extend(trace_list)
+
+    # Create the figure from ordered traces
+    fig = go.Figure()
+    for trace in ordered_traces:
         fig.add_trace(trace)
 
     fig.add_shape(
