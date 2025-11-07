@@ -854,29 +854,38 @@ def load_demo_file(n_clicks):
     Output('legend-order', 'data', allow_duplicate=True),
     [Input({'type': 'order-up', 'index': ALL}, 'n_clicks'),
      Input({'type': 'order-down', 'index': ALL}, 'n_clicks')],
-    [State('legend-order', 'data'),
-     State('atomic-contributions-container', 'children')],
+    [State('legend-order', 'data')],
     prevent_initial_call=True
 )
-def update_legend_order(up_clicks, down_clicks, legend_order, table_children):
+def update_legend_order(up_clicks, down_clicks, legend_order):
     ctx = dash.callback_context
     if not ctx.triggered:
         raise dash.exceptions.PreventUpdate
+    
+    # Make a copy of the legend order to avoid mutating the original
+    new_legend_order = legend_order.copy() if legend_order else []
+    
     trigger = ctx.triggered[0]['prop_id']
     # Extract the atom name or 'Total' from the trigger string
     import re
     match = re.search(r'index":\s*"([^"]+)"', trigger)
     if not match:
-        return legend_order
+        return new_legend_order
+    
     name = match.group(1)
-    if name not in legend_order:
-        return legend_order
-    idx = legend_order.index(name)
+    if not new_legend_order or name not in new_legend_order:
+        return new_legend_order
+    
+    idx = new_legend_order.index(name)
+    
     if 'order-up' in trigger and idx > 0:
-        legend_order[idx-1], legend_order[idx] = legend_order[idx], legend_order[idx-1]
-    elif 'order-down' in trigger and idx < len(legend_order)-1:
-        legend_order[idx+1], legend_order[idx] = legend_order[idx], legend_order[idx+1]
-    return legend_order
+        # Move item up (swap with previous item)
+        new_legend_order[idx-1], new_legend_order[idx] = new_legend_order[idx], new_legend_order[idx-1]
+    elif 'order-down' in trigger and idx < len(new_legend_order)-1:
+        # Move item down (swap with next item)
+        new_legend_order[idx+1], new_legend_order[idx] = new_legend_order[idx], new_legend_order[idx+1]
+    
+    return new_legend_order
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8050))  # Use the PORT environment variable set by Heroku
