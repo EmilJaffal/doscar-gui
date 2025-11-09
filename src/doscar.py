@@ -276,8 +276,8 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                 x=dos_up,
                 y=energy,
                 mode='lines',
-                name='Total (↑)',
-                line=dict(color=custom_colors.get('Total', 'blue'), width=2.25),
+                name='Total ↑',
+                line=dict(color=custom_colors.get('Total', 'black'), width=2.25),
             ))
             
             # Plot spin down (negative side)
@@ -285,8 +285,9 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                 x=-dos_down,  # Negative for left side
                 y=energy,
                 mode='lines',
-                name='Total (↓)',
-                line=dict(color=custom_colors.get('Total', 'red'), width=2.25, dash='dash'),
+                name='Total ↓',
+                line=dict(color=custom_colors.get('Total', 'black'), width=2.25, dash='dash'),
+                showlegend=False,  # Hide from legend since spin up (↑) already indicates spin polarization
             ))
         else:
             # Regular total DOS plot
@@ -370,7 +371,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                         x=total_contribution_up,
                         y=atom_dos_blocks[start_index][:, 0],
                         mode='lines',
-                        name=f"{atom_type} (↑)",
+                        name=f"{atom_type} ↑",
                         line=dict(color=custom_colors.get(atom_type, 'gray'), width=2.5)
                     ))
                     
@@ -379,8 +380,9 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
                         x=-total_contribution_down,
                         y=atom_dos_blocks[start_index][:, 0],
                         mode='lines',
-                        name=f"{atom_type} (↓)",
-                        line=dict(color=custom_colors.get(atom_type, 'gray'), width=2.5, dash='dash')
+                        name=f"{atom_type} ↓",
+                        line=dict(color=custom_colors.get(atom_type, 'gray'), width=2.5, dash='dash'),
+                        showlegend=False,  # Hide from legend since spin up (↑) already indicates spin polarization
                     ))
                 else:
                     # Regular atomic total plot
@@ -422,7 +424,7 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
         # Extract atom type from trace name (handle both "Atom" and "Atom (orbital)" formats)
         trace_name = trace.name
         if '(' in trace_name and ')' in trace_name:
-            if trace_name.endswith('(↑)') or trace_name.endswith('(↓)'):
+            if trace_name.endswith('↑') or trace_name.endswith('↓'):
                 # Handle spin cases like "Fe (↑)" or "Fe (↓)"
                 atom_type = trace_name.split(' (')[0]
             else:
@@ -470,11 +472,8 @@ def parse_doscar_and_plot(doscar_filename, poscar_filename, xmin=None, xmax=None
         ),
     )
 
-    # Adjust legend position for spin display
-    if display_spin_separated and has_spin_data:
-        legend_y_adjusted = 0.4
-    else:
-        legend_y_adjusted = legend_y
+    # Use user-specified legend position
+    legend_y_adjusted = legend_y
 
     fig.update_layout(
         font=dict(family="DejaVu Sans, Arial, sans-serif", size=18, color='black'),
